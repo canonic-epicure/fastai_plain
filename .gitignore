@@ -1,0 +1,21 @@
+# JetBrains IDE
+/.idea
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# data
+/data
+/submission*.csv
+
+# checkpoints and run information
+/checkpoints_*
+/runs
