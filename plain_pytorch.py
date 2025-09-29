@@ -9,10 +9,27 @@ from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision.transforms import v2
+import itertools
 
 import data
 from dataset import ImageDatasetWithLabel, resize_to_square_with_reflect
 from model import MySimpleModel
+
+
+norm_types = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.InstanceNorm1d, nn.InstanceNorm2d, nn.InstanceNorm3d, nn.LayerNorm)
+
+def norm_bias_params(module, with_bias=True):
+    if isinstance(module, norm_types): return list(module.parameters())
+
+    res = list(itertools.chain(*list(map(
+        lambda m: norm_bias_params(m, with_bias=with_bias),
+        module.children()
+    ))))
+
+    if with_bias and getattr(module, 'bias', None) is not None: res.append(module.bias)
+
+    return res
+
 
 
 class CFG:
@@ -75,19 +92,24 @@ for p in model.parameters():
 for p in model.dict['head'].parameters():
     p.requires_grad = True
 
-head_params_with_decay = [
-    *model.dict['lin1'].parameters(),
-    *model.dict['lin2'].parameters(),
-]
-head_params_without_decay = [
-    *model.dict['bnorm1'].parameters(),
-    *model.dict['bnorm2'].parameters(),
-]
+pretrained_bias_and_norm = []
+
+# unfreeze bias and normalization parameters
+for p in norm_bias_params(model.dict['body'], with_bias=False):
+    p.requires_grad = True
+    pretrained_bias_and_norm.append(p)
+
+head_params = set(model.dict['head'].parameters())
+head_params_without_decay = set(norm_bias_params(model.dict['head'], with_bias=True))
+
+head_params_with_decay = list(head_params - head_params_without_decay)
+head_params_without_decay = list(head_params_without_decay)
 
 optimizer.param_groups = []
 
 optimizer.add_param_group({'name': "head_with_decay", "params": head_params_with_decay, "lr": head_lr, "weight_decay": 0.01})
 optimizer.add_param_group({'name': "head_without_decay", "params": head_params_without_decay, "lr": head_lr, "weight_decay": 0.0})
+optimizer.add_param_group({'name': "pretrained_bias_and_norm", "params": pretrained_bias_and_norm, "lr": head_lr, "weight_decay": 0.0})
 
 # Loss
 criterion = nn.CrossEntropyLoss()
@@ -151,20 +173,22 @@ for cur_epoch in range(CFG.EPOCHS):
 
         images, labels = batch["inputs"].to("cuda"), batch["labels"].to("cuda")
 
-        with torch.autocast(device_type='cuda', dtype=torch.float16):
-            out = model(images)
-            loss = criterion(out.logits, labels)
+        out = model(images)
+        loss = criterion(out.logits, labels)
+        # with torch.autocast(device_type='cuda', dtype=torch.float16):
+        #     out = model(images)
+        #     loss = criterion(out.logits, labels)
 
         c = batch['inputs'].size(0)
         loss_acc += loss.item() * c
         count += c
 
-        # loss.backward()
-        # optimizer.step()
+        loss.backward()
+        optimizer.step()
 
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+        # scaler.scale(loss).backward()
+        # scaler.step(optimizer)
+        # scaler.update()
 
 
     tracking_loss.append(loss_acc / count)
@@ -179,7 +203,7 @@ for cur_epoch in range(CFG.EPOCHS):
 
     preds_collector = []
 
-    with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
+    with torch.inference_mode(): #, torch.autocast('cuda', dtype=torch.float16):
         for batch in tqdm.tqdm(dataloader_val, total=len(dataloader_val), desc='Validation'):
             logits = model.forward(batch["inputs"].to("cuda")).logits
 

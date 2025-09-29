@@ -45,11 +45,13 @@ class MySimpleModel(nn.Module):
 
         self.num_classes = num_classes
 
+        dict = self.dict = {}
+
         body = BodyOfPretrained(model_id)
 
         num_features = body.num_features
 
-        dict = self.dict = {}
+        dict['body'] = body
 
         dict['head_pool'] = AdaptiveConcatPool2d(size=1)
         dict['bnorm1'] = nn.BatchNorm1d(num_features * 2, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
