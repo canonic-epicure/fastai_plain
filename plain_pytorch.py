@@ -12,7 +12,7 @@ from torchvision.transforms import v2
 import itertools
 
 import data
-from dataset import ImageDatasetWithLabel, resize_to_square_with_reflect
+from dataset import ImageDatasetWithLabel, resize_to_square_with_reflect, resize_and_pad_square
 from model import MySimpleModel
 
 
@@ -57,7 +57,9 @@ set_seed(CFG.SEED, reproducible=True)
 
 model_preprocessor = v2.Compose([
     lambda input:
-        resize_to_square_with_reflect(input, size=CFG.IMAGE_SIZE, as_tensor=True),
+        # resize_to_square_with_reflect(input, size=CFG.IMAGE_SIZE, as_tensor=True),
+        resize_and_pad_square(input, CFG.IMAGE_SIZE),
+    v2.ToTensor(),
 
     v2.Normalize(mean=torch.tensor([0.4850, 0.4560, 0.4060]), std=torch.tensor([0.2290, 0.2240, 0.2250])),
 ])
@@ -173,22 +175,22 @@ for cur_epoch in range(CFG.EPOCHS):
 
         images, labels = batch["inputs"].to("cuda"), batch["labels"].to("cuda")
 
-        out = model(images)
-        loss = criterion(out.logits, labels)
-        # with torch.autocast(device_type='cuda', dtype=torch.float16):
-        #     out = model(images)
-        #     loss = criterion(out.logits, labels)
+        # out = model(images)
+        # loss = criterion(out.logits, labels)
+        with torch.autocast(device_type='cuda', dtype=torch.float16):
+            out = model(images)
+            loss = criterion(out.logits, labels)
 
         c = batch['inputs'].size(0)
         loss_acc += loss.item() * c
         count += c
 
-        loss.backward()
-        optimizer.step()
+        # loss.backward()
+        # optimizer.step()
 
-        # scaler.scale(loss).backward()
-        # scaler.step(optimizer)
-        # scaler.update()
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
 
     tracking_loss.append(loss_acc / count)
@@ -203,7 +205,7 @@ for cur_epoch in range(CFG.EPOCHS):
 
     preds_collector = []
 
-    with torch.inference_mode(): #, torch.autocast('cuda', dtype=torch.float16):
+    with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
         for batch in tqdm.tqdm(dataloader_val, total=len(dataloader_val), desc='Validation'):
             logits = model.forward(batch["inputs"].to("cuda")).logits
 

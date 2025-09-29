@@ -71,6 +71,32 @@ class ImageDatasetWithLabel(DatasetWithLabel, ImageDataset):
         return super().__getitem__(idx)
 
 
+def resize_by_long_side(img, long_side: int, mode=InterpolationMode.BICUBIC):
+    # img: PIL.Image или torch.Tensor формы (C,H,W)
+    if isinstance(img, torch.Tensor):
+        H, W = img.shape[-2], img.shape[-1]
+    else:
+        W, H = img.size
+    s = long_side / max(H, W)
+    new_h = max(1, int(round(H * s)))
+    new_w = max(1, int(round(W * s)))
+    return F.resize(img, [new_h, new_w], interpolation=mode, antialias=True)
+
+
+def resize_and_pad_square(img, long_side: int, fill=0, mode=InterpolationMode.BICUBIC):
+    img = resize_by_long_side(img, long_side, mode)
+    if isinstance(img, torch.Tensor):
+        C, H, W = img.shape[-3], img.shape[-2], img.shape[-1]
+    else:
+        W, H = img.size
+    pad_w = long_side - W
+    pad_h = long_side - H
+    # паддинг как (left, top, right, bottom)
+    left  = pad_w // 2;  right = pad_w - left
+    top   = pad_h // 2;  bottom = pad_h - top
+    return F.pad(img, [left, top, right, bottom], fill=fill)
+
+
 def resize_to_square_with_reflect(img: Image.Image, size: int, as_tensor=True) -> Image.Image:
     """
     Масштабирует изображение, сохраняя аспект, так чтобы max(H, W)=size,
